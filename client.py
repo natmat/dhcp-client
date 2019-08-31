@@ -1,7 +1,7 @@
 '''
 Created on Mar 27, 2011
 
-@author: hassane
+@author: nmattick
 '''
 import socket
 import struct
@@ -22,18 +22,21 @@ def getMacInBytes():
     return macb
 
 
+def newTransactionID(transactionID):
+    # Computer a random transaction ID, incremented from a random seed starter
+    if transactionID is None:
+        ransactionID = randint(0, 2 ** 32)
+    else:
+        transactionID += 1
+        if transactionID >= 2 ** 32:
+            ransactionID = 0
+    transactionID = transactionID.to_bytes(4, byteorder='big')
+
 class DHCPDiscover:
     transactionID = None
 
     def __init__(self):
-        # Computer a random transaction ID, incremented from a random seed starter
-        if self.transactionID is None:
-            self.transactionID = randint(0, 2**32)
-        else:
-            self.transactionID += 1
-            if self.transactionID >= 2**32:
-                self.transactionID = 0
-        self.transactionID = self.transactionID.to_bytes(4, byteorder='big')
+        newTransactionID(self.transactionID)
 
     def buildPacket(self):
         macb = getMacInBytes()
@@ -91,8 +94,11 @@ class DHCPOffer:
 
     def printOffer(self):
         key = ['transactionID', 'DHCP Server', 'Offered IP address', 'subnet mask', 'lease time (s)', 'default gateway']
-        val = [self.transID, self.DHCPServerIdentifier, self.offerIP, self.subnetMask, self.leaseTime, self.router]
-        for i in range(4):
+        # Convert transId from bytes to string
+        transIDAsInt = hex(int.from_bytes(self.transID, byteorder='big'))
+        transIDAsString = str(transIDAsInt)
+        val = [transIDAsString, self.DHCPServerIdentifier, self.offerIP, self.subnetMask, self.leaseTime, self.router]
+        for i in range(5):
             print('{0:20s} : {1:15s}'.format(key[i], val[i]))
 
         print('{0:20s}'.format('DNS Servers') + ' : ', end='')
@@ -120,6 +126,46 @@ def recvDHCPOffer(dhcpSocket, discoverPacket):
         raise
 
 
+class DHCPRequest:
+    transactionID = None
+
+    def __init__(self, transID):
+        newTransactionID(self.transactionID)
+
+    def buildPacket(self):
+        macb = getMacInBytes()
+        packet = b''
+        packet += b'\x01'  # Message type: Boot Request (1)
+        packet += b'\x01'  # Hardware type: Ethernet
+        packet += b'\x06'  # Hardware address length: 6
+        packet += b'\x00'  # Hops: 0
+        packet += self.transactionID  # Transaction ID
+        packet += b'\x00\x00'  # Seconds elapsed: 0
+        packet += b'\x80\x00'  # Bootp flags: 0x8000 (Broadcast) + reserved flags
+        packet += b'\x00\x00\x00\x00'  # Client IP address: 0.0.0.0
+        packet += b'\x00\x00\x00\x00'  # Your (client) IP address: 0.0.0.0
+        packet += b'\x00\x00\x00\x00'  # Next server IP address: 0.0.0.0
+        packet += b'\x00\x00\x00\x00'  # Relay agent IP address: 0.0.0.0
+        # packet += b'\x00\x26\x9e\x04\x1e\x9b'   #Client MAC address: 00:26:9e:04:1e:9b
+        packet += macb
+        packet += b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # Client hardware address padding: 00000000000000000000
+        packet += b'\x00' * 67  # Server host name not given
+        packet += b'\x00' * 125  # Boot file name not given
+        packet += b'\x63\x82\x53\x63'  # Magic cookie: DHCP
+        packet += b'\x35\x01\x03'  # Option: (t=53,l=1) DHCP Message Type = DHCP Request
+        # packet += b'\x3d\x06\x00\x26\x9e\x04\x1e\x9b'   #Option: (t=61,l=6) Client identifier
+        packet += b'\x3d\x06' + macb
+        packet += b'\x37\x03\x03\x01\x06'  # Option: (t=55,l=3) Parameter Request List
+        packet += b'\xff'  # End Option
+        return packet
+
+
+def incrementTransID(transactionID):
+    bytesAsInt = int.from_bytes(transactionID, byteorder='big')
+    bytesAsInt += 1
+    transactionID = bytesAsInt.to_bytes(4, byteorder='big')
+
+
 if __name__ == '__main__':
     # defining the socket
     dhcpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # internet, UDP
@@ -133,21 +179,26 @@ if __name__ == '__main__':
         input('press any key to quit...')
         exit()
 
-    # buiding and sending the DHCPDiscover packet
-    discoverPacket = DHCPDiscover()
+    option = ''
+    while option == '':
+        option = input('Enter option:\n1: DHCP Discover\n2: DHCP Request\n?: ')
+        if option == '1':
+            # buiding and sending the DHCPDiscover packet
+            discoverPacket = DHCPDiscover()
+            dhcpSocket.sendto(discoverPacket.buildPacket(), ('<broadcast>', 67))
+            print('DHCP Discover sent waiting for reply {}...\n'.format(discoverPacket.transactionID))
 
-    for i in range(10):
-        dhcpSocket.sendto(discoverPacket.buildPacket(), ('<broadcast>', 67))
-        print('DHCP Discover sent waiting for reply {}...\n'.format(discoverPacket.transactionID))
+            recvDHCPOffer(dhcpSocket, discoverPacket)
+        elif option == '2':
+            # buiding and sending the DHCPDiscover packet
+            requestPacket = DHCPRequest()
+            incrementTransID(requestPacket.transactionID)
 
-        recvDHCPOffer(dhcpSocket, discoverPacket)
-        bytesAsInt = int.from_bytes(discoverPacket.transactionID, byteorder='big')
-        bytesAsInt += 1
-        discoverPacket.transactionID = bytesAsInt.to_bytes(4, byteorder='big')
-        time.sleep(1)
+        else:
+            break
 
+
+    print('The END')
     dhcpSocket.close()  # we close the socket
-
-    input('press any key to quit...')
     exit()
 
