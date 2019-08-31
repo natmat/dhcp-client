@@ -10,6 +10,11 @@ from random import randint
 import time
 import sys
 
+
+def getTransactionIDAsString(transactionID):
+    transIDAsInt = hex(int.from_bytes(transactionID, byteorder='big'))
+    return(str(transIDAsInt))
+
 def getMacInBytes():
     mac = str(hex(get_mac()))
     mac = mac[2:]
@@ -25,18 +30,19 @@ def getMacInBytes():
 def newTransactionID(transactionID):
     # Computer a random transaction ID, incremented from a random seed starter
     if transactionID is None:
-        ransactionID = randint(0, 2 ** 32)
+        transactionID = randint(0, 2 ** 32)
     else:
         transactionID += 1
         if transactionID >= 2 ** 32:
-            ransactionID = 0
+            transactionID = 0
     transactionID = transactionID.to_bytes(4, byteorder='big')
+    return(transactionID)
 
 class DHCPDiscover:
     transactionID = None
 
     def __init__(self):
-        newTransactionID(self.transactionID)
+        self.transactionID = newTransactionID(self.transactionID)
 
     def buildPacket(self):
         macb = getMacInBytes()
@@ -95,9 +101,8 @@ class DHCPOffer:
     def printOffer(self):
         key = ['transactionID', 'DHCP Server', 'Offered IP address', 'subnet mask', 'lease time (s)', 'default gateway']
         # Convert transId from bytes to string
-        transIDAsInt = hex(int.from_bytes(self.transID, byteorder='big'))
-        transIDAsString = str(transIDAsInt)
-        val = [transIDAsString, self.DHCPServerIdentifier, self.offerIP, self.subnetMask, self.leaseTime, self.router]
+        trans_id_as_string = getTransactionIDAsString(self.transID)
+        val = [trans_id_as_string, self.DHCPServerIdentifier, self.offerIP, self.subnetMask, self.leaseTime, self.router]
         for i in range(5):
             print('{0:20s} : {1:15s}'.format(key[i], val[i]))
 
@@ -129,8 +134,8 @@ def recvDHCPOffer(dhcpSocket, discoverPacket):
 class DHCPRequest:
     transactionID = None
 
-    def __init__(self, transID):
-        newTransactionID(self.transactionID)
+    def __init__(self):
+        self.transactionID = newTransactionID(self.transactionID)
 
     def buildPacket(self):
         macb = getMacInBytes()
@@ -159,6 +164,62 @@ class DHCPRequest:
         packet += b'\xff'  # End Option
         return packet
 
+class DHCPAck:
+    def __init__(self, data, transID):
+        self.data = data
+        self.transID = transID
+        self.offerIP = ''
+        self.nextServerIP = ''
+        self.DHCPServerIdentifier = ''
+        self.leaseTime = ''
+        self.router = ''
+        self.subnetMask = ''
+        self.DNS = []
+        self.unpack()
+
+    def unpack(self):
+        if self.data[4:8] == self.transID:
+            data = self.data
+            self.offerIP = '.'.join(map(lambda x: str(x), data[16:20]))
+            self.nextServerIP = '.'.join(map(lambda x: str(x), data[20:24]))
+            self.DHCPServerIdentifier = '.'.join(map(lambda x: str(x), data[245:249]))
+            self.leaseTime = str(struct.unpack('!L', data[251:255])[0])
+            self.router = '.'.join(map(lambda x: str(x), data[257:261]))
+            self.subnetMask = '.'.join(map(lambda x: str(x), data[263:267]))
+            dnsNB = int(data[268] / 4)
+            for i in range(0, 4 * dnsNB, 4):
+                self.DNS.append('.'.join(map(lambda x: str(x), data[269 + i:269 + i + 4])))
+
+    def printAck(self):
+        key = ['transactionID', 'DHCP Server', 'Offered IP address', 'subnet mask', 'lease time (s)', 'default gateway']
+        val = [getTransactionIDAsString(self.transID), self.DHCPServerIdentifier, self.offerIP, self.subnetMask, self.leaseTime, self.router]
+        for i in range(5):
+            print('{0:20s} : {1:15s}'.format(key[i], val[i]))
+
+        print('{0:20s}'.format('DNS Servers') + ' : ', end='')
+        if self.DNS:
+            print('{0:15s}'.format(self.DNS[0]))
+        if len(self.DNS) > 1:
+            for i in range(1, len(self.DNS)):
+                print('{0:22s} {1:15s}'.format(' ', self.DNS[i]))
+
+
+def recvDHCPAck(dhcpSocket, requestPacket):
+    # receiving DHCPOffer packet
+    dhcpSocket.settimeout(3)
+    try:
+        while True:
+            data = dhcpSocket.recv(1024)
+            ack = DHCPAck(data, requestPacket.transactionID)
+            if ack.offerIP:
+                ack.printAck()
+                break
+    except socket.timeout as e:
+        print(e)
+    except:
+        print("Unexpected error: {}",format(sys.exc_info()[0]))
+        raise
+
 
 def incrementTransID(transactionID):
     bytesAsInt = int.from_bytes(transactionID, byteorder='big')
@@ -179,20 +240,22 @@ if __name__ == '__main__':
         input('press any key to quit...')
         exit()
 
-    option = ''
-    while option == '':
+    option = None
+    while option is None or option != 'q':
         option = input('Enter option:\n1: DHCP Discover\n2: DHCP Request\n?: ')
         if option == '1':
             # buiding and sending the DHCPDiscover packet
             discoverPacket = DHCPDiscover()
             dhcpSocket.sendto(discoverPacket.buildPacket(), ('<broadcast>', 67))
             print('DHCP Discover sent waiting for reply {}...\n'.format(discoverPacket.transactionID))
-
             recvDHCPOffer(dhcpSocket, discoverPacket)
+
         elif option == '2':
             # buiding and sending the DHCPDiscover packet
             requestPacket = DHCPRequest()
-            incrementTransID(requestPacket.transactionID)
+            dhcpSocket.sendto(requestPacket.buildPacket(), ('<broadcast>', 67))
+            print('DHCP Request sent waiting for reply {}...\n'.format(requestPacket.transactionID))
+            recvDHCPAck(dhcpSocket, requestPacket)
 
         else:
             break
