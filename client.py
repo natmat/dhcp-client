@@ -83,7 +83,7 @@ class DHCPOffer:
         trans_id_as_string = get_transaction_ID_as_string(self.trans_ID)
         val = [trans_id_as_string, self.DHCP_server_identifier, self.offer_IP, self.subnet_mask, self.lease_time,
                self.router]
-        for i in range(len(key1)):
+        for i in range(len(key)):
             print('{0:20s} : {1:15s}'.format(key[i], val[i]))
 
         print('{0:20s}'.format('DNS Servers') + ' : ', end='')
