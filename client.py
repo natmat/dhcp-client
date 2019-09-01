@@ -112,10 +112,10 @@ class DHCPRequest:
     transaction_ID = None
 
     def __init__(self):
-        self.transaction_ID = new_transaction_id(self.transaction_ID)
+        self.transaction_ID = utils.new_transaction_ID(self.transaction_ID)
 
     def buildPacket(self):
-        macb = get_MAC_in_bytes()
+        macb = utils.get_MAC_in_bytes()
         packet = b''
         packet += b'\x01'  # Message type: Boot Request (1)
         packet += b'\x01'  # Hardware type: Ethernet
